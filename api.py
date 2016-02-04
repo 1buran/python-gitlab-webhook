@@ -122,5 +122,6 @@ if __name__ == '__main__':
 
     from wsgiref import simple_server
 
-    httpd = simple_server.make_server('127.0.0.1', 8000, api)
+    httpd = simple_server.make_server(
+        conf['listen_address'], conf['listen_port'], api)
     httpd.serve_forever()
