@@ -1,0 +1,5 @@
+access_key: IifwRv0R0j7P25X0tXZzSUPaElintL2doDcZRVo2nd2DiFP5GRj7d4
+log_settings:
+    level: DEBUG
+    format: '%(headers.remote_addr)s [%(asctime)s] %(name)s %(funcName)-18s %(levelname)-7s => %(message)s'
+    datefmt: '%Y-%m-%d %H:%M:%S'
