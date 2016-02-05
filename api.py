@@ -109,7 +109,7 @@ class GitLabWebHookReceiver:
             raise falcon.HTTPBadRequest(
                 'Missing thing',
                 'A thing must be submitted in the request body.')
-        self.log.debug('received data: %s', payload)
+        self.log.debug('received data: %s', payload, extra=req.env)
         resp.status = falcon.HTTP_201
 
 

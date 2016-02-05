@@ -1,7 +1,9 @@
-access_key: IifwRv0R0j7P25X0tXZzSUPaElintL2doDcZRVo2nd2DiFP5GRj7d4
+access_key: IifwRv0R0j7P25X0tXZzSUPaElintL2doDcZRVo2nd2DiFP5GRj7d4 # please change it
 listen_address: 127.0.0.1
 listen_port: 5555
 log_settings:
-    level: DEBUG
-    format: '[%(asctime)s] %(name)s %(funcName)-18s %(levelname)-7s => %(message)s'
-    datefmt: '%Y-%m-%d %H:%M:%S'
+    level: DEBUG # you can change loglevel, please read 'Logging Levels' section here: https://docs.python.org/3/library/logging.html
+    filename: logs/gitlab_webhook_receiver.log  # you can change path
+    format: '%(REMOTE_ADDR)s [%(asctime)s] %(levelname)-7s "%(REQUEST_METHOD)s %(PATH_INFO)s %(QUERY_STRING)s %(SERVER_PROTOCOL)s" %(name)s %(funcName)s %(message)s' # you can change logformat, please read 'LogRecord attributes' section here: https://docs.python.org/3/library/logging.html
+    datefmt: '%Y-%m-%d %H:%M:%S' # you can change datetime format, please read man strftime
+
