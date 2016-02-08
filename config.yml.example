@@ -13,13 +13,60 @@ access_key: IifwRv0R0j7P25X0tXZzSUPaElintL2doDcZRVo2nd2DiFP5GRj7d4
 listen_address: 127.0.0.1
 listen_port: 5555
 
+# Simple validator of Git commits messages. The goal is to not allow
+# bogus or malformed messages in commits, which comes to repo with foreign
+# merge requests (default: off). For example with default validate_regex
+# messages should be like these:
+#   Add: Google Tag Manager (Issue #1344)
+#   Fix: broken urls in emails due to changes introduced in #1123 (Issue #1341)
+#   Change: domain.com -> www.domain.com (Issue #1118)
+#   Refactoring: move project settings into separate file (Issue #1750)
+#   Remove: stale files (Issue #1350)
+#   Update: fixtures (Issue #1530)
+# and etc. You can use your own format, please read about python regexes
+# here: https://docs.python.org/3/library/re.html
+validate_commit_messages: off
+validate_regex: '^(Refactoring|Remove|Add|Change|Update|Fix): [^():]+ \(Issue #\d+\)$'
+
+# Git workdir. You can change it to any apropriate for you directory,
+# but keep in mind that directory should be exist and script should have
+# write permissions there. Also script user account should have rights
+# for cloning original repos (see section "Deploy keys" in repo settings).
+git_workdir: var/repo
+
+# GitLab auth token is needed for commenting/closing merge requests.
+gitlab_auth_token: change_me
+
+# Run tests(default: off).
+run_tests: off
+test_cmd: make tests
+
 # Log settings, if you want to change format, then please read the sections
 # 'Logging Levels' and 'LogRecord attributes' here:
 # https://docs.python.org/3/library/logging.html. If you want to change
 # datetime format, then please read 'man strftime'.
 log_settings:
-    level: DEBUG
-    filename: logs/gitlab_webhook_receiver.log
-    format: '%(REMOTE_ADDR)s [%(asctime)s] %(levelname)-7s "%(REQUEST_METHOD)s %(PATH_INFO)s %(QUERY_STRING)s %(SERVER_PROTOCOL)s" %(name)s %(funcName)s %(message)s'
-    datefmt: '%Y-%m-%d %H:%M:%S'
-
+    formatters:
+        web:
+            format: '[%(asctime)s] %(levelname)-7s "%(REMOTE_ADDR)s %(REQUEST_METHOD)s %(PATH_INFO)s %(QUERY_STRING)s %(SERVER_PROTOCOL)s" %(name)s.%(funcName)s %(message)s'
+            datefmt: '%Y-%m-%d %H:%M:%S'
+        system:
+            format: '[%(asctime)s] %(levelname)-7s %(name)s.%(funcName)-30s %(message)s'
+            datefmt: '%Y-%m-%d %H:%M:%S'
+    handlers:
+        web:
+            class: logging.FileHandler
+            formatter: web
+            filename: logs/webhook_receiver.log
+        system:
+            class: logging.FileHandler
+            formatter: system
+            filename: logs/main.log
+    loggers:
+        GitLabWebHookReceiver:
+            level: DEBUG
+            handlers: [web]
+        GitLabAPI:
+            level: DEBUG
+            handlers: [system]
+    version: 1
