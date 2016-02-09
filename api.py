@@ -10,13 +10,18 @@ Requirements:
     - pyyaml (http://pyyaml.org/)
 
 Setup:
-    $ pip install -U pip setuptools
-    $ pip install -U cython
-    $ pip install -U falcon
-    $ pip install -U pyyaml mongoengine requests
+    - install system packages:
+        $ sudo apt-get install python-virtualenv
+    - create virtual environment, enable it and install requirements:
+        $ pip install -U pip setuptools
+        $ pip install -U cython
+        $ pip install -U falcon
+        $ pip install -U pyyaml mongoengine requests
 """
 import os
+import os.path
 import re
+import subprocess
 import json
 import time
 import logging
@@ -37,6 +42,8 @@ with open('config.yml') as config_file:
 logging.config.dictConfig(conf['log_settings'])
 
 re_gitlab_url = re.compile(r'https?://[\w.]+/')
+re_repo_work_dir = re.compile(r'/([\w.-]+).git$')
+install_dir = os.path.dirname(os.path.abspath(__file__))
 
 
 class AuthMiddleware:
@@ -99,6 +106,18 @@ def max_body(limit):
     return hook
 
 
+def run_cmd(cmd):
+    """Run command in shell."""
+    try:
+        output = subprocess.check_output(
+            cmd, shell=True, stderr=subprocess.STDOUT,
+            universal_newlines=True)
+    except subprocess.CalledProcessError as er:
+        return False, er.output
+    else:
+        return True, output
+
+
 class GitLabWebHookReceiver:
     """GitLab Web hook receiver."""
 
@@ -123,16 +142,19 @@ class GitLabWebHookReceiver:
 class GitLabAPI:
     """Simple class for using GitLab API."""
 
-    def __init__(self, repo_url, project_id, iid):
+    def __init__(self, repo_url, clone_url, project_id, iid):
         """Standart init method."""
         self.token = conf['gitlab_auth_token']
         self.session = requests.Session()
         self.session.headers.update({'PRIVATE-TOKEN': self.token})
         self.repo_url = repo_url
+        self.clone_url = clone_url
         self.project_id = project_id
         self.iid = iid
         self.api_url = re_gitlab_url.match(self.repo_url).group(0) + 'api/v3'
         self.log = logging.getLogger(self.__class__.__name__)
+        self.workdir = None
+        self.repo_dir = None
 
     def get_merge_request_commits(self):
         """Get merge request."""
@@ -150,12 +172,38 @@ class GitLabAPI:
                              response.status_code)
         return response.json()
 
+    def get_merge_request_changes(self):
+        """Get merge request changes."""
+        try:
+            response = self.session.get(
+                '{api_url}/projects/{project_id}/merge_request/{iid}/changes'
+                .format(api_url=self.api_url, project_id=self.project_id,
+                        iid=self.iid)
+            )
+        except Exception as er:
+            self.log.error(er)
+
+        if response.status_code != 200:
+            self.log.warning('http response status code: %d',
+                             response.status_code)
+        return response.json()
+
     def validate_merge_request_commits(self):
         """Validate merge requests commits."""
+        bad_messages = []
         for commit in self.get_merge_request_commits():
             if not conf['validate_regex'].match(commit['message']):
-                return False, commit['message']
-        return True, ''
+                bad_messages.append(commit['message'])
+        return len(bad_messages) == 0, '\n'.join(bad_messages)
+
+    def run_commits_messages_validator(self):
+        """Run self.validate_merge_request_commits."""
+        valid, info = self.validate_merge_request_commits()
+        if not valid:
+            msg = 'Merge request commits have invalid messages:\n'
+            msg += '<pre>%s</pre>' % info
+            self.comment_merge_request(msg)
+        return valid
 
     def comment_merge_request(self, msg):
         """Comment merge request."""
@@ -189,24 +237,91 @@ class GitLabAPI:
             self.log.warning('http response status code: %d',
                              response.status_code)
 
+    def prepare_workdir(self):
+        """Clone upstream repo."""
+        os.chdir(install_dir)
+
+        if os.path.isdir(conf['git_workdir']):
+            found = re_repo_work_dir.search(self.clone_url)
+            if found:
+                self.workdir = found.group(1)
+            else:
+                self.log.error(
+                    'bogus Git repo URL %s', self.clone_url)
+                return False
+        else:
+            self.log.error(
+                'directory %s does not exist', conf['git_workdir'])
+            return False
+
+        self.repo_dir = os.path.join(conf['git_workdir'], self.workdir)
+
+        if os.path.isdir(self.repo_dir):
+            # clean up git workdir, reset changes, fetch updates
+            os.chdir(self.repo_dir)
+            ok, output = run_cmd(
+                'git checkout -- . && git clean -fd && git pull')
+            if not ok:
+                self.log.error(output)
+        else:
+            # initialize new repo dir: clone repo
+            os.chdir(conf['git_workdir'])
+            ok, output = run_cmd(
+                'git clone -q {clone_url}'.format(clone_url=self.clone_url))
+            if not ok:
+                self.log.error(
+                    'can not clone repo %s into %s <%s>',
+                    self.clone_url, self.repo_dir, output)
+                return False
+            os.chdir(self.workdir)
+        self.apply_patch()
+        return True
+
+    def run_test_cmd(self):
+        """Run test command."""
+        ok, output = run_cmd(conf['test_cmd'])
+        if not ok:
+            msg = 'Test command failed, '
+            msg += 'please checkout output of **%s**:\n' % conf['test_cmd']
+            msg += '<pre>%s</pre>' % output
+            self.log.warning(msg)
+            self.comment_merge_request(msg)
+        return ok
+
+    def apply_patch(self):
+        """Apply patch."""
+        diff = ''
+        for change in self.get_merge_request_changes()['changes']:
+            diff += change['diff']
+        with open('/tmp/__received.patch', 'w', encoding='utf') as f:
+            f.write(diff)
+        ok, output = run_cmd('patch -p 1 < /tmp/__received.patch')
+        if not ok:
+            self.log.error(output)
+
 
 def process_merge_request():
     """Process each merge request.
 
-    This is blocking operation: we awaiting for a new merge requst paload in
-    queue, so this is function should be run in separate process.
+    This is blocking operation: we awaiting for a new merge requst payload
+    in queue, so this is function should be run in separate process.
     """
     item = merge_requests_queue.get(block=True)
-    gitlab_api = GitLabAPI(
-        repo_url=item['repository']['homepage'],
-        project_id=item['object_attributes']['target_project_id'],
-        iid=item['object_attributes']['iid']
-    )
-    if conf['validate_commit_messages']:
-        valid, info = gitlab_api.validate_merge_request_commits()
-        if not valid:
-            msg = 'Received commit has invalid message:\n>%s' % info
-            gitlab_api.comment_merge_request(msg)
+    if item['object_attributes']['state'] in ('reopened', 'opened'):
+        gitlab_api = GitLabAPI(
+            repo_url=item['repository']['homepage'],
+            clone_url=item['repository']['url'],
+            project_id=item['object_attributes']['target_project_id'],
+            iid=item['object_attributes']['iid']
+        )
+        tests_results = [True]
+        if conf['validate_commit_messages']:
+            tests_results.append(gitlab_api.run_commits_messages_validator())
+        if conf['run_tests']:
+            done = gitlab_api.prepare_workdir()
+            if done:
+                tests_results.append(gitlab_api.run_test_cmd())
+        if not all(tests_results):
             gitlab_api.close_merge_request()
 
 gitlab_webhook_receiver = GitLabWebHookReceiver()
