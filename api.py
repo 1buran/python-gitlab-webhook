@@ -143,51 +143,66 @@ class GitLabWebHookReceiver:
 class GitLabAPI:
     """Simple class for using GitLab API."""
 
-    def __init__(self, repo_url, clone_url, project_id, branch, mr_id):
+    def __init__(self, repo_url, clone_url, project_id, branch, merge_id):
         """Standart init method."""
         self.token = conf['gitlab_auth_token']
-        self.session = requests.Session()
-        self.session.headers.update({'PRIVATE-TOKEN': self.token})
+        self.session = None
         self.repo_url = repo_url
         self.clone_url = clone_url
         self.project_id = project_id
         self.branch = branch
-        self.mr_id = mr_id
+        self.merge_id = merge_id
         self.api_url = re_gitlab_url.match(self.repo_url).group(0) + 'api/v3'
         self.log = logging.getLogger(self.__class__.__name__)
         self.workdir = None
         self.repo_dir = None
 
-    def get_merge_request_commits(self):
-        """Get merge request."""
-        try:
-            response = self.session.get(
-                '{api_url}/projects/{project_id}/merge_request/{mr_id}/commits'
-                .format(api_url=self.api_url, project_id=self.project_id,
-                        mr_id=self.mr_id)
-            )
-        except Exception as er:
-            self.log.error(er)
+    def _prepare_request(self, action):
+        """Prepare request to GitLab server, build API endpoint URL."""
+        method, endpoint = action.split('_')
+        url = '{api_url}/projects/{project_id}'
+        url += '/merge_request/{merge_id}/' + endpoint
+        url = url.format(api_url=self.api_url, project_id=self.project_id,
+                         merge_id=self.merge_id)
+        return method.upper(), url
 
-        if response.status_code != 200:
-            self.log.warning('http response status code: %d',
-                             response.status_code)
-        return response.json()
+    def _make_request(self, action, payload=None):
+        """Make a request to GitLab server."""
+        try:
+            method, url = self._prepare_request(action)
+            req = requests.Request(
+                method, url, headers={'PRIVATE-TOKEN': self.token},
+                data=payload)
+
+            if self.session is None:
+                self.session = requests.Session()
+
+            response = self.session.send(req.prepare())
+
+            if response.status_code > 201:
+                raise Exception('bad response status code: %d',
+                                response.status_code)
+        except Exception as er:
+            self.log.error('action: %s, url: %s, error message: %s',
+                           action, url, er)
+        else:
+            return response.json()
 
     def get_merge_request_changes(self):
         """Get merge request changes."""
-        url = '{api_url}/projects/{project_id}/merge_request/{mr_id}/changes'\
-            .format(api_url=self.api_url, project_id=self.project_id,
-                    mr_id=self.mr_id)
-        try:
-            response = self.session.get(url)
-        except Exception as er:
-            self.log.error(er)
+        return self._make_request('get_changes')
 
-        if response.status_code != 200:
-            self.log.warning('http response status code: %d, url: %s',
-                             response.status_code, url)
-        return response.json()
+    def get_merge_request_commits(self):
+        """Get merge request commits."""
+        return self._make_request('get_commits')
+
+    def post_merge_request_comment(self, msg):
+        """Comment merge request."""
+        return self._make_request('post_comments', {'note': msg})
+
+    def close_merge_request(self):
+        """Close merge request."""
+        return self._make_request('put_', {'state_event': 'close'})
 
     def validate_merge_request_commits(self):
         """Validate merge requests commits."""
@@ -203,41 +218,8 @@ class GitLabAPI:
         if not valid:
             msg = 'Merge request commits have invalid messages:\n'
             msg += '<pre>%s</pre>' % info
-            self.comment_merge_request(msg)
+            self.post_merge_request_comment(msg)
         return valid
-
-    def comment_merge_request(self, msg):
-        """Comment merge request."""
-        url = '{api_url}/projects/{project_id}/merge_request/{mr_id}/comments'\
-            .format(api_url=self.api_url, project_id=self.project_id,
-                    mr_id=self.mr_id)
-        try:
-            response = self.session.post(
-                url,
-                data={'note': msg}
-            )
-        except Exception as er:
-            self.log.error(er)
-
-        if response.status_code != 200:
-            self.log.warning('http response status code: %d',
-                             response.status_code)
-
-    def close_merge_request(self):
-        """Close merge request."""
-        try:
-            response = self.session.put(
-                '{api_url}/projects/{project_id}/merge_request/{mr_id}'
-                .format(api_url=self.api_url, project_id=self.project_id,
-                        mr_id=self.mr_id),
-                data={'state_event': 'close'}
-            )
-        except Exception as er:
-            self.log.error(er)
-
-        if response.status_code != 200:
-            self.log.warning('http response status code: %d',
-                             response.status_code)
 
     def prepare_workdir(self):
         """Clone upstream repo."""
@@ -290,7 +272,7 @@ class GitLabAPI:
             msg += 'please checkout output of **%s**:\n' % conf['test_cmd']
             msg += '<pre>%s</pre>' % output
             self.log.warning(msg)
-            self.comment_merge_request(msg)
+            self.post_merge_request_comment(msg)
         return ok
 
     def apply_patch(self):
@@ -320,7 +302,7 @@ def process_merge_request():
             clone_url=item['repository']['url'],
             project_id=item['object_attributes']['target_project_id'],
             branch=item['object_attributes']['target_branch'],
-            mr_id=item['object_attributes']['id']
+            merge_id=item['object_attributes']['id']
         )
         tests_results = [True]
         if conf['validate_commit_messages']:
