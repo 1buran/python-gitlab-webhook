@@ -29,6 +29,7 @@ import logging.config
 import falcon
 import yaml
 import requests
+import tempfile
 from multiprocessing import Queue
 
 conf = {}
@@ -142,7 +143,7 @@ class GitLabWebHookReceiver:
 class GitLabAPI:
     """Simple class for using GitLab API."""
 
-    def __init__(self, repo_url, clone_url, project_id, iid):
+    def __init__(self, repo_url, clone_url, project_id, branch, mr_id):
         """Standart init method."""
         self.token = conf['gitlab_auth_token']
         self.session = requests.Session()
@@ -150,7 +151,8 @@ class GitLabAPI:
         self.repo_url = repo_url
         self.clone_url = clone_url
         self.project_id = project_id
-        self.iid = iid
+        self.branch = branch
+        self.mr_id = mr_id
         self.api_url = re_gitlab_url.match(self.repo_url).group(0) + 'api/v3'
         self.log = logging.getLogger(self.__class__.__name__)
         self.workdir = None
@@ -160,9 +162,9 @@ class GitLabAPI:
         """Get merge request."""
         try:
             response = self.session.get(
-                '{api_url}/projects/{project_id}/merge_request/{iid}/commits'
+                '{api_url}/projects/{project_id}/merge_request/{mr_id}/commits'
                 .format(api_url=self.api_url, project_id=self.project_id,
-                        iid=self.iid)
+                        mr_id=self.mr_id)
             )
         except Exception as er:
             self.log.error(er)
@@ -174,18 +176,17 @@ class GitLabAPI:
 
     def get_merge_request_changes(self):
         """Get merge request changes."""
+        url = '{api_url}/projects/{project_id}/merge_request/{mr_id}/changes'\
+            .format(api_url=self.api_url, project_id=self.project_id,
+                    mr_id=self.mr_id)
         try:
-            response = self.session.get(
-                '{api_url}/projects/{project_id}/merge_request/{iid}/changes'
-                .format(api_url=self.api_url, project_id=self.project_id,
-                        iid=self.iid)
-            )
+            response = self.session.get(url)
         except Exception as er:
             self.log.error(er)
 
         if response.status_code != 200:
-            self.log.warning('http response status code: %d',
-                             response.status_code)
+            self.log.warning('http response status code: %d, url: %s',
+                             response.status_code, url)
         return response.json()
 
     def validate_merge_request_commits(self):
@@ -207,11 +208,12 @@ class GitLabAPI:
 
     def comment_merge_request(self, msg):
         """Comment merge request."""
+        url = '{api_url}/projects/{project_id}/merge_request/{mr_id}/comments'\
+            .format(api_url=self.api_url, project_id=self.project_id,
+                    mr_id=self.mr_id)
         try:
             response = self.session.post(
-                '{api_url}/projects/{project_id}/merge_request/{iid}/comments'
-                .format(api_url=self.api_url, project_id=self.project_id,
-                        iid=self.iid),
+                url,
                 data={'note': msg}
             )
         except Exception as er:
@@ -225,9 +227,9 @@ class GitLabAPI:
         """Close merge request."""
         try:
             response = self.session.put(
-                '{api_url}/projects/{project_id}/merge_request/{iid}'
+                '{api_url}/projects/{project_id}/merge_request/{mr_id}'
                 .format(api_url=self.api_url, project_id=self.project_id,
-                        iid=self.iid),
+                        mr_id=self.mr_id),
                 data={'state_event': 'close'}
             )
         except Exception as er:
@@ -260,20 +262,23 @@ class GitLabAPI:
             # clean up git workdir, reset changes, fetch updates
             os.chdir(self.repo_dir)
             ok, output = run_cmd(
-                'git checkout -- . && git clean -fd && git pull')
+                'git checkout -- . && git clean -fd && git pull && '
+                'git checkout {branch}'.format(branch=self.branch))
             if not ok:
                 self.log.error(output)
         else:
             # initialize new repo dir: clone repo
             os.chdir(conf['git_workdir'])
-            ok, output = run_cmd(
-                'git clone -q {clone_url}'.format(clone_url=self.clone_url))
+            cmd = 'git clone -q {clone_url} && cd {workdir} && \
+                git checkout {branch}'.format(
+                clone_url=self.clone_url, branch=self.branch,
+                workdir=self.workdir)
+            ok, output = run_cmd(cmd)
             if not ok:
                 self.log.error(
                     'can not clone repo %s into %s <%s>',
                     self.clone_url, self.repo_dir, output)
                 return False
-            os.chdir(self.workdir)
         self.apply_patch()
         return True
 
@@ -293,11 +298,13 @@ class GitLabAPI:
         diff = ''
         for change in self.get_merge_request_changes()['changes']:
             diff += change['diff']
-        with open('/tmp/__received.patch', 'w', encoding='utf') as f:
+        with tempfile.NamedTemporaryFile(
+                'w', encoding='utf-8', delete=False) as f:
             f.write(diff)
-        ok, output = run_cmd('patch -p 1 < /tmp/__received.patch')
+        ok, output = run_cmd('patch -p 1 < {file}'.format(file=f.name))
         if not ok:
             self.log.error(output)
+        os.unlink(f.name)
 
 
 def process_merge_request():
@@ -312,7 +319,8 @@ def process_merge_request():
             repo_url=item['repository']['homepage'],
             clone_url=item['repository']['url'],
             project_id=item['object_attributes']['target_project_id'],
-            iid=item['object_attributes']['iid']
+            branch=item['object_attributes']['target_branch'],
+            mr_id=item['object_attributes']['id']
         )
         tests_results = [True]
         if conf['validate_commit_messages']:
