@@ -13,7 +13,7 @@ Setup:
     $ pip install -U pip setuptools
     $ pip install -U cython
     $ pip install -U falcon
-    $ pip install -U pyyaml mongoengine
+    $ pip install -U pyyaml mongoengine requests
 """
 import os
 import re
