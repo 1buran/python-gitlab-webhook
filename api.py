@@ -205,7 +205,7 @@ def process_merge_request():
     if conf['validate_commit_messages']:
         valid, info = gitlab_api.validate_merge_request_commits()
         if not valid:
-            msg = 'Received commit has invalid message: "%s"' % info
+            msg = 'Received commit has invalid message:\n>%s' % info
             gitlab_api.comment_merg_request(msg)
             gitlab_api.close_merge_request()
 
