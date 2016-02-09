@@ -157,7 +157,7 @@ class GitLabAPI:
                 return False, commit['message']
         return True, ''
 
-    def comment_merg_request(self, msg):
+    def comment_merge_request(self, msg):
         """Comment merge request."""
         try:
             response = self.session.post(
@@ -206,7 +206,7 @@ def process_merge_request():
         valid, info = gitlab_api.validate_merge_request_commits()
         if not valid:
             msg = 'Received commit has invalid message:\n>%s' % info
-            gitlab_api.comment_merg_request(msg)
+            gitlab_api.comment_merge_request(msg)
             gitlab_api.close_merge_request()
 
 gitlab_webhook_receiver = GitLabWebHookReceiver()
