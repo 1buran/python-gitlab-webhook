@@ -1,22 +1,8 @@
 """GitLab Webhook receiver.
 
 The goal: receive web hook request from GtLab, run project tests,
-respond with comment of status.
-
-Requirements:
-    - python 3.x
-    - falcon (http://falconframework.org/)
-    - mongoengine (http://mongoengine.org/)
-    - pyyaml (http://pyyaml.org/)
-
-Setup:
-    - install system packages:
-        $ sudo apt-get install python-virtualenv
-    - create virtual environment, enable it and install requirements:
-        $ pip install -U pip setuptools
-        $ pip install -U cython
-        $ pip install -U falcon
-        $ pip install -U pyyaml mongoengine requests
+respond with comment of status (make a comment to discussion) and
+closing merge requests if tests failed.
 """
 import os
 import os.path
