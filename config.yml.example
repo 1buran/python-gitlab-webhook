@@ -41,6 +41,22 @@ gitlab_auth_token: change_me
 run_tests: off
 test_cmd: make tests
 
+# Run on push events(default: off). You can specify some commands for any branch
+# which you want monitor. In examples we run some Fabric commands for update
+# project instances:
+#  - when update branch "master", we run "fab update:role=prod"
+#  - when update branch "dev", we run "fab update:role=dev"
+#  - when update branch which name matched pattern "sprint\d+" (e.g. sprint1 or
+#    sprint15 etc), we run "fab update:role=sprint"
+process_push: off
+run_on_push:
+  - master:
+      fab update:role=prod
+  - dev:
+      fab update:role=dev
+  - sprint\d+:
+      fab update:role=sprint
+
 # Log settings, if you want to change format, then please read the sections
 # 'Logging Levels' and 'LogRecord attributes' here:
 # https://docs.python.org/3/library/logging.html. If you want to change
@@ -70,3 +86,7 @@ log_settings:
             level: DEBUG
             handlers: [system]
     version: 1
+
+# Local Variables:
+# mode: yaml
+# End:
