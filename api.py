@@ -301,48 +301,54 @@ class GitLabAPI:
 def process_merge_request():
     """Process each merge request.
 
-    This is blocking operation: we awaiting for a new merge requst payload
-    in queue, so this is function should be run in separate process.
+    This is blocking and endless loop operation: we awaiting for a new merge
+    requst payload in queue, so this is function should be run in
+    separate process.
     """
-    item = merge_requests_queue.get(block=True)
-    if item['object_attributes']['state'] in ('reopened', 'opened'):
-        gitlab_api = GitLabAPI(
-            repo_url=item['repository']['homepage'],
-            clone_url=item['repository']['url'],
-            project_id=item['object_attributes']['target_project_id'],
-            branch=item['object_attributes']['target_branch'],
-            merge_id=item['object_attributes']['id'],
-            action_type='merge_request'
-        )
-        tests_results = [True]
-        if conf['validate_commit_messages']:
-            tests_results.append(gitlab_api.run_commits_messages_validator())
-        if conf['run_tests']:
-            done = gitlab_api.prepare_workdir()
-            if done:
-                tests_results.append(gitlab_api.run_test_cmd())
-        if not all(tests_results):
-            gitlab_api.close_merge_request()
+    while True:
+        item = merge_requests_queue.get(block=True)
+        if item['object_attributes']['state'] in ('reopened', 'opened'):
+            gitlab_api = GitLabAPI(
+                repo_url=item['repository']['homepage'],
+                clone_url=item['repository']['url'],
+                project_id=item['object_attributes']['target_project_id'],
+                branch=item['object_attributes']['target_branch'],
+                merge_id=item['object_attributes']['id'],
+                action_type='merge_request'
+            )
+            tests_results = [True]
+            if conf['validate_commit_messages']:
+                tests_results.append(
+                    gitlab_api.run_commits_messages_validator())
+            if conf['run_tests']:
+                done = gitlab_api.prepare_workdir()
+                if done:
+                    tests_results.append(gitlab_api.run_test_cmd())
+            if not all(tests_results):
+                gitlab_api.close_merge_request()
 
 
 def process_push():
     """Process push events.
 
-    This is blocking operation: we awaiting for a new incoming push events.
+    This is blocking and endless loop operation: we awaiting for a new
+    incoming push events and process them, so this is function should be run
+    in separate process..
     """
-    item = push_queue.get(block=True)
-    gitlab_api = GitLabAPI(
-        repo_url=item['repository']['homepage'],
-        clone_url=item['repository']['url'],
-        project_id=item['project_id'],
-        branch=item['ref'].split('refs/heads/')[1],
-        merge_id=None,
-        action_type='push'
-    )
-    if conf['process_push']:
-        done = gitlab_api.prepare_workdir()
-        if done:
-            gitlab_api.run_on_push_cmd()
+    while True:
+        item = push_queue.get(block=True)
+        gitlab_api = GitLabAPI(
+            repo_url=item['repository']['homepage'],
+            clone_url=item['repository']['url'],
+            project_id=item['project_id'],
+            branch=item['ref'].split('refs/heads/')[1],
+            merge_id=None,
+            action_type='push'
+        )
+        if conf['process_push']:
+            done = gitlab_api.prepare_workdir()
+            if done:
+                gitlab_api.run_on_push_cmd()
 
 
 def run_webapp():
